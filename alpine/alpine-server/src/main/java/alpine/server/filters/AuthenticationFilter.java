@@ -70,6 +70,7 @@ public class AuthenticationFilter implements ContainerRequestFilter, ContainerRe
             if (apiKeyAuthService.isSpecified()) {
                 try {
                     principal = apiKeyAuthService.authenticate();
+                    MDC.put("api_key_public_id", apiKeyAuthService.getApiKeyPublicId());
                     ApiKeyUsageTracker.onApiKeyUsed(apiKeyAuthService.getApiKeyId());
                     portfolioAccessControlEnabled = apiKeyAuthService.isPortfolioAccessControlEnabled();
                 } catch (AuthenticationException e) {
@@ -83,6 +84,7 @@ public class AuthenticationFilter implements ContainerRequestFilter, ContainerRe
                 try {
                     principal = sessionAuthService.authenticate();
                     if (principal != null) {
+                        MDC.remove("api_key_public_id");
                         authenticationScheme = PrincipalSecurityContext.BEARER_AUTH;
                         portfolioAccessControlEnabled = sessionAuthService.isPortfolioAccessControlEnabled();
                         if (sessionAuthService.getTokenHash() != null) {
@@ -111,6 +113,7 @@ public class AuthenticationFilter implements ContainerRequestFilter, ContainerRe
     @Override
     public void filter(final ContainerRequestContext requestContext, final ContainerResponseContext responseContext) throws IOException {
         MDC.remove("principal");
+        MDC.remove("api_key_public_id");
     }
 
 }

@@ -93,6 +93,7 @@ public final class ApiKeyAuthenticationService implements AuthenticationService<
                      INNER JOIN "TEAMS_PERMISSIONS" AS tp
                         ON tp."TEAM_ID" = akt."TEAM_ID"
                      WHERE akt."APIKEY_ID" = api_key."ID"
+                       AND api_key."USER_ID" IS NULL
                      UNION
                     SELECT up."PERMISSION_ID"
                       FROM "USERS_PERMISSIONS" AS up
@@ -117,6 +118,7 @@ public final class ApiKeyAuthenticationService implements AuthenticationService<
                SELECT akt."TEAM_ID"
                  FROM "APIKEYS_TEAMS" AS akt
                 WHERE akt."APIKEY_ID" = api_key."ID"
+                       AND api_key."USER_ID" IS NULL
                 UNION
                SELECT ut."TEAM_ID"
                  FROM "USERS_TEAMS" AS ut
@@ -128,6 +130,7 @@ public final class ApiKeyAuthenticationService implements AuthenticationService<
     private final DataSource dataSource;
     private final @Nullable String assertedApiKey;
     private @Nullable Long apiKeyId;
+    private @Nullable String apiKeyPublicId;
     private @Nullable Boolean portfolioAccessControlEnabled;
 
     /**
@@ -151,6 +154,13 @@ public final class ApiKeyAuthenticationService implements AuthenticationService<
         }
 
         return apiKeyId;
+    }
+
+    public String getApiKeyPublicId() {
+        if (apiKeyPublicId == null) {
+            throw new IllegalStateException("Authentication not attempted yet");
+        }
+        return apiKeyPublicId;
     }
 
     public boolean isPortfolioAccessControlEnabled() {
@@ -218,6 +228,7 @@ public final class ApiKeyAuthenticationService implements AuthenticationService<
         }
 
         this.apiKeyId = lookupResult.apiKeyId();
+        this.apiKeyPublicId = decodedApiKey.getPublicId();
         this.portfolioAccessControlEnabled = lookupResult.portfolioAccessControlEnabled();
 
         return lookupResult.principal();

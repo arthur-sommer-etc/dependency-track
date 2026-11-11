@@ -401,6 +401,60 @@ public class ApiKeyAuthenticationServiceTest {
         assertThat(statementCount.get()).isEqualTo(1);
     }
 
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(value = UserType.class, names = {"MANAGED", "LDAP", "OIDC"})
+    void personalTokensShouldFollowCurrentOwnerAndLifecycle(UserType type) throws Exception {
+        final String rawKey;
+        final long userId;
+        final long keyId;
+        try (final var qm = new AlpineQueryManager()) {
+            final alpine.model.User owner = switch (type) {
+                case MANAGED -> qm.createManagedUser("alice", "password-hash");
+                case LDAP -> qm.createLdapUser("alice");
+                case OIDC -> qm.createOidcUser("alice");
+                default -> throw new IllegalArgumentException("Expected a human user type");
+            };
+            final var team = qm.createTeam("allowed");
+            team.setPermissions(List.of(qm.createPermission("TEAM_PERM", null)));
+            qm.persist(team);
+            owner.setTeams(List.of(team));
+            owner.setPermissions(List.of(qm.createPermission("DIRECT_PERM", null)));
+            userId = qm.persist(owner).getId();
+            final ApiKey key = ApiKeyGenerator.generate();
+            key.setUser(owner);
+            key.setCreated(new Date());
+            key.setExpiresAt(Date.from(Instant.now().plus(Duration.ofDays(1))));
+            final var unrelated = qm.createTeam("must-not-grant");
+            unrelated.setPermissions(List.of(qm.createPermission("ESCALATED", null)));
+            qm.persist(unrelated);
+            // Even an accidental key-to-team link must not exceed the owner's access.
+            key.setTeams(List.of(unrelated));
+            keyId = qm.persist(key).getId();
+            rawKey = key.getKey();
+        }
+        final var principal = (UserPrincipal) authenticate(rawKey);
+        assertThat(principal.type()).isEqualTo(type);
+        assertThat(principal.username()).isEqualTo("alice");
+        assertThat(principal.effectivePermissions()).containsExactlyInAnyOrder("DIRECT_PERM", "TEAM_PERM");
+        assertThat(principal.teams()).extracting(TeamRef::name).containsExactly("allowed");
+        executeUpdate("DELETE FROM \"USERS_TEAMS\" WHERE \"USER_ID\" = " + userId);
+        executeUpdate("DELETE FROM \"USERS_PERMISSIONS\" WHERE \"USER_ID\" = " + userId);
+        final var changed = (UserPrincipal) authenticate(rawKey);
+        assertThat(changed.effectivePermissions()).isEmpty();
+        assertThat(changed.teams()).isEmpty();
+        if (type == UserType.MANAGED) {
+            executeUpdate("UPDATE \"USER\" SET \"SUSPENDED\" = TRUE WHERE \"ID\" = " + userId);
+            assertThatExceptionOfType(AuthenticationException.class).isThrownBy(() -> authenticate(rawKey));
+            executeUpdate("UPDATE \"USER\" SET \"SUSPENDED\" = FALSE WHERE \"ID\" = " + userId);
+        }
+        executeUpdate("UPDATE \"APIKEY\" SET \"EXPIRES_AT\" = NOW() - INTERVAL '1 SECOND' WHERE \"ID\" = " + keyId);
+        assertThatExceptionOfType(AuthenticationException.class).isThrownBy(() -> authenticate(rawKey));
+        executeUpdate("UPDATE \"APIKEY\" SET \"EXPIRES_AT\" = NOW() + INTERVAL '1 DAY' WHERE \"ID\" = " + keyId);
+        assertThat(authenticate(rawKey)).isNotNull();
+        executeUpdate("DELETE FROM \"USER\" WHERE \"ID\" = " + userId);
+        assertThatExceptionOfType(AuthenticationException.class).isThrownBy(() -> authenticate(rawKey));
+    }
+
     private static Principal authenticate(String key) throws AuthenticationException {
         final var containerRequestMock = mock(ContainerRequest.class);
         when(containerRequestMock.getHeaderString("X-Api-Key")).thenReturn(key);

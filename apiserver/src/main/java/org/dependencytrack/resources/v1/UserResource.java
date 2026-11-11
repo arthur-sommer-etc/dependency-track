@@ -31,6 +31,7 @@ import alpine.server.auth.Authenticator;
 import alpine.server.auth.OidcAuthenticationService;
 import alpine.server.auth.PasswordService;
 import alpine.server.auth.PermissionRequired;
+import alpine.server.auth.PrincipalSecurityContext;
 import alpine.server.auth.SessionTokenService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -69,8 +70,10 @@ import jakarta.ws.rs.PUT;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.core.SecurityContext;
 
 import javax.jdo.Query;
 import java.util.ArrayList;
@@ -431,7 +434,9 @@ public class UserResource extends AbstractApiResource {
     @Path("self")
     @Produces(MediaType.APPLICATION_JSON)
     @Consumes(MediaType.APPLICATION_JSON)
-    @Operation(summary = "Updates information about the current logged in user.")
+    @Operation(
+            summary = "Updates information about the current logged in user.",
+            description = "Self-service password changes require bearer session authentication.")
     @ApiResponses(
             value = {
                 @ApiResponse(
@@ -441,11 +446,18 @@ public class UserResource extends AbstractApiResource {
                 @ApiResponse(
                         responseCode = "400",
                         description = "An invalid payload was submitted or the user is not a managed user."),
-                @ApiResponse(responseCode = "401", description = "Unauthorized")
+                @ApiResponse(responseCode = "401", description = "Unauthorized"),
+                @ApiResponse(responseCode = "403", description = "A password change requires a user session")
             })
-    public Response updateSelf(ManagedUser jsonUser) {
+    public Response updateSelf(ManagedUser jsonUser, @Context SecurityContext securityContext) {
         if (!(getPrincipal() instanceof final UserPrincipal userPrincipal)) {
             return Response.status(Response.Status.UNAUTHORIZED).build();
+        }
+        if (StringUtils.isNotBlank(jsonUser.getNewPassword())
+                && !PrincipalSecurityContext.BEARER_AUTH.equals(securityContext.getAuthenticationScheme())) {
+            return Response.status(Response.Status.FORBIDDEN)
+                    .entity("A user session is required to change a password.")
+                    .build();
         }
 
         try (final var qm = new QueryManager(getAlpineRequest())) {

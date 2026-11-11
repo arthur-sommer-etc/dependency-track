@@ -229,6 +229,37 @@ class UserResourceAuthenticatedTest extends ResourceTest {
     }
 
     @Test
+    void personalTokenMustNotChangeLoginPassword() {
+        final var token = alpine.security.ApiKeyGenerator.generate();
+        token.setUser(testUser);
+        token.setCreated(new java.util.Date());
+        token.setExpiresAt(java.util.Date.from(java.time.Instant.now().plusSeconds(3600)));
+        qm.persist(token);
+
+        final var update = new ManagedUser();
+        update.setFullname("Alice");
+        update.setEmail("alice@example.com");
+        update.setNewPassword("replacement-password");
+        update.setConfirmPassword("replacement-password");
+        final Response denied = jersey.target(V1_USER + "/self")
+                .request()
+                .header(X_API_KEY, token.getKey())
+                .post(Entity.json(update));
+        assertThat(denied.getStatus()).isEqualTo(403);
+        try (final var freshQm = new QueryManager()) {
+            assertThat(freshQm.getManagedUser("testuser").getPassword()).isEqualTo(TEST_USER_PASSWORD_HASH);
+        }
+        final Response allowed = jersey.target(V1_USER + "/self")
+                .request()
+                .header("Authorization", "Bearer " + sessionToken)
+                .post(Entity.json(update));
+        assertThat(allowed.getStatus()).isEqualTo(200);
+        try (final var freshQm = new QueryManager()) {
+            assertThat(freshQm.getManagedUser("testuser").getPassword()).isNotEqualTo(TEST_USER_PASSWORD_HASH);
+        }
+    }
+
+    @Test
     void updateSelfPasswordsTest() {
         ManagedUser user = new ManagedUser();
         user.setUsername(testUser.getUsername());

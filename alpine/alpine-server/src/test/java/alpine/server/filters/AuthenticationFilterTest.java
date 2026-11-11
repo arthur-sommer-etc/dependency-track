@@ -82,6 +82,13 @@ class AuthenticationFilterTest extends JerseyTest {
         }
 
         @GET
+        @Path("/audit-context")
+        @Produces(MediaType.TEXT_PLAIN)
+        public String getAuditContext() {
+            return org.slf4j.MDC.get("principal") + ":" + org.slf4j.MDC.get("api_key_public_id");
+        }
+
+        @GET
         @Path("/anonymous")
         @Produces(MediaType.APPLICATION_JSON)
         @AuthenticationNotRequired
@@ -311,6 +318,25 @@ class AuthenticationFilterTest extends JerseyTest {
                           "principalPermissions": []
                         }
                         """);
+    }
+
+    @Test
+    void shouldAttributePersonalTokenToUserAndPublicIdentifier() {
+        final ApiKey key;
+        final String session;
+        try (final var qm = new AlpineQueryManager()) {
+            final ManagedUser user = qm.createManagedUser("alice", "password");
+            key = alpine.security.ApiKeyGenerator.generate();
+            key.setUser(user);
+            key.setCreated(new Date());
+            key.setExpiresAt(Date.from(Instant.now().plusSeconds(3600)));
+            qm.persist(key);
+            session = new SessionTokenService().createSession(user.getId());
+        }
+        assertThat(target("/audit-context").request().header("X-Api-Key", key.getKey()).get(String.class))
+                .isEqualTo("alice:" + key.getPublicId()).doesNotContain(key.getSecret());
+        assertThat(target("/audit-context").request().header("X-Api-Key", key.getKey())
+                .header("Authorization", "Bearer " + session).get(String.class)).isEqualTo("alice:null");
     }
 
 }
